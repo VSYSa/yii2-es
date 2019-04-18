@@ -26,7 +26,7 @@ use yii\db\QueryTrait;
  *
  * ~~~
  * $query = new Query;
- * $query->fields('id, name')
+ * $query->storedFields('id, name')
  *     ->from('myindex', 'users')
  *     ->limit(10);
  * // build and execute the query
@@ -62,13 +62,22 @@ class Query extends Component implements QueryInterface
      * In this case the `_source` field will be returned by default which can be configured using [[source]].
      * Setting this to an empty array will result in no fields being retrieved, which means that only the primaryKey
      * of a record will be available in the result.
+     * > Note: Field values are [always returned as arrays] even if they only have one value.
      *
-     * For each field you may also add an array representing a [script field]. Example:
+     * [always returned as arrays]: http://www.elastic.co/guide/en/elasticsearch/reference/1.x/_return_values.html#_return_values
+     * [script field]: http://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-script-fields.html
      *
+	 * @see https://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-stored-fields.html
+     * @see storedFields()
+     * @see source
+     */
+    public $storedFields;
+
+	/**
+	 * @var array the scripted fields being retrieved from the documents.
+	 * Example:
      * ```php
-     * $query->fields = [
-     *     'id',
-     *     'name',
+     * $query->scriptFields = [
      *     'value_times_two' => [
      *         'script' => "doc['my_field_name'].value * 2",
      *     ],
@@ -80,18 +89,18 @@ class Query extends Component implements QueryInterface
      *     ],
      * ]
      * ```
-     *
+	 *
      * > Note: Field values are [always returned as arrays] even if they only have one value.
-     *
+	 *
      * [always returned as arrays]: http://www.elastic.co/guide/en/elasticsearch/reference/1.x/_return_values.html#_return_values
      * [script field]: http://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-script-fields.html
-     *
-     * @see http://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-fields.html#search-request-fields
-     * @see http://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-script-fields.html
-     * @see fields()
+	 *
+	 * @see https://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-script-fields.html
+     * @see scriptFields()
      * @see source
-     */
-    public $fields;
+	 */
+	public $scriptFields;
+
     /**
      * @var array this option controls how the `_source` field is returned from the documents. For example, `['id', 'name']`
      * means that only the `id` and `name` field should be returned from `_source`.
@@ -160,6 +169,12 @@ class Query extends Component implements QueryInterface
      */
     public $suggest = [];
     /**
+     * @var array list of collapse to add to this query.
+     * @see http://www.elastic.co/guide/en/elasticsearch/reference/current/search-suggesters.html
+     * @since 2.1.0
+     */
+    public $collapse = [];
+    /**
      * @var float Exclude documents which have a _score less than the minimum specified in min_score
      * @see http://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-min-score.html
      * @since 2.0.4
@@ -218,6 +233,9 @@ class Query extends Component implements QueryInterface
     public function all($db = null)
     {
         $result = $this->createCommand($db)->search();
+        if ($result === false) {
+            throw new Exception('Elasticsearch search query failed.');
+        }
         if (empty($result['hits']['hits'])) {
             return [];
         }
@@ -262,6 +280,9 @@ class Query extends Component implements QueryInterface
     public function one($db = null)
     {
         $result = $this->createCommand($db)->search(['size' => 1]);
+        if ($result === false) {
+            throw new Exception('Elasticsearch search query failed.');
+        }
         if (empty($result['hits']['hits'])) {
             return false;
         }
@@ -284,6 +305,9 @@ class Query extends Component implements QueryInterface
     public function search($db = null, $options = [])
     {
         $result = $this->createCommand($db)->search($options);
+        if ($result === false) {
+            throw new Exception('Elasticsearch search query failed.');
+        }
         if (!empty($result['hits']['hits']) && $this->indexBy !== null) {
             $rows = [];
             foreach ($result['hits']['hits'] as $key => $row) {
@@ -298,8 +322,6 @@ class Query extends Component implements QueryInterface
         }
         return $result;
     }
-
-    // TODO add scroll/scan http://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-search-type.html#scan
 
     /**
      * Executes the query and deletes all matching documents.
@@ -352,6 +374,9 @@ class Query extends Component implements QueryInterface
         $command = $this->createCommand($db);
         $command->queryParts['_source'] = [$field];
         $result = $command->search();
+        if ($result === false) {
+            throw new Exception('Elasticsearch search query failed.');
+        }
         if (empty($result['hits']['hits'])) {
             return [];
         }
@@ -377,15 +402,13 @@ class Query extends Component implements QueryInterface
      */
     public function count($q = '*', $db = null)
     {
-        // TODO consider sending to _count api instead of _search for performance
-        // only when no facety are registerted.
-        // http://www.elastic.co/guide/en/elasticsearch/reference/current/search-count.html
-        // http://www.elastic.co/guide/en/elasticsearch/reference/1.x/_search_requests.html
-
-        $options = [];
-        $options['search_type'] = 'count';
-
-        return $this->createCommand($db)->search($options)['hits']['total'];
+        // performing a query with return size of 0, is equal to getting result stats such as count
+        // https://www.elastic.co/guide/en/elasticsearch/reference/5.6/breaking_50_search_changes.html#_literal_search_type_literal
+        $count = $this->createCommand($db)->search(['size' => 0])['hits']['total'];
+        if ($count === false) {
+            throw new Exception('Elasticsearch count query failed.');
+        }
+        return $count;
     }
 
     /**
@@ -482,6 +505,19 @@ class Query extends Component implements QueryInterface
         return $this;
     }
 
+    /**
+     * Adds a collapse to this query.
+     * @param array $collapse the configuration options for collapse.
+     * @return $this the query object itself
+     * @see https://www.elastic.co/guide/en/elasticsearch/reference/5.3/search-request-collapse.html#search-request-collapse
+     * @since 2.1.0
+     */
+    public function addCollapse($collapse)
+    {
+        $this->collapse = $collapse;
+        return $this;
+    }
+
     // TODO add validate query http://www.elastic.co/guide/en/elasticsearch/reference/current/search-validate.html
 
     // TODO support multi query via static method http://www.elastic.co/guide/en/elasticsearch/reference/current/search-multi-search.html
@@ -489,7 +525,7 @@ class Query extends Component implements QueryInterface
     /**
      * Sets the query part of this search query.
      * @param string|array $query
-     * @return $this the query object itself
+     * @return $this the query object itself.
      */
     public function query($query)
     {
@@ -563,17 +599,6 @@ class Query extends Component implements QueryInterface
     }
 
     /**
-     * Sets the filter part of this search query.
-     * @param string $filter
-     * @return $this the query object itself
-     */
-    public function filter($filter)
-    {
-        $this->filter = $filter;
-        return $this;
-    }
-
-    /**
      * Sets the index and type to retrieve documents from.
      * @param string|array $index The index to retrieve data from. This can be a string representing a single index
      * or a an array of multiple indexes. If this is `null` it means that all indexes are being queried.
@@ -591,16 +616,37 @@ class Query extends Component implements QueryInterface
 
     /**
      * Sets the fields to retrieve from the documents.
+	 * > Quote from the elasticsearch doc:
+	 * > The stored_fields parameter is about fields that are explicitly marked
+	 * > as stored in the mapping, which is off by default and generally not recommended.
+	 * > Use source filtering instead to select subsets of the original source document to be returned.
+	 * 
      * @param array $fields the fields to be selected.
      * @return $this the query object itself
-     * @see http://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-fields.html
+	 * @see https://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-stored-fields.html
      */
-    public function fields($fields)
+    public function storedFields($fields)
     {
         if (is_array($fields) || $fields === null) {
-            $this->fields = $fields;
+            $this->storedFields = $fields;
         } else {
-            $this->fields = func_get_args();
+            $this->storedFields = func_get_args();
+        }
+        return $this;
+    }
+
+    /**
+     * Sets the script fields to retrieve from the documents.
+     * @param array $fields the fields to be selected.
+     * @return $this the query object itself
+	 * @see https://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-script-fields.html
+     */
+    public function scriptFields($fields)
+    {
+        if (is_array($fields) || $fields === null) {
+            $this->scriptFields = $fields;
+        } else {
+            $this->scriptFields = func_get_args();
         }
         return $this;
     }
@@ -679,6 +725,36 @@ class Query extends Component implements QueryInterface
         }
 
         $this->options = array_merge($this->options, $options);
+        return $this;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function andWhere($condition)
+    {
+        if ($this->where === null) {
+            $this->where = $condition;
+        } else if (isset($this->where[0]) && $this->where[0] === 'and') {
+            $this->where[] = $condition;
+        } else {
+            $this->where = ['and', $this->where, $condition];
+        }
+        return $this;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function orWhere($condition)
+    {
+        if ($this->where === null) {
+            $this->where = $condition;
+        } else if (isset($this->where[0]) && $this->where[0] === 'or') {
+            $this->where[] = $condition;
+        } else {
+            $this->where = ['or', $this->where, $condition];
+        }
         return $this;
     }
 

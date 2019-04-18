@@ -12,7 +12,7 @@ Yii Framework 2 elasticsearch extension Change Log
 - Chg: Search queries that result in a 404 error due to missing indices are now no longer silently interpreted as empty result, but will throw an exception (cebe)
 - Enh #222: Added collapse support (walkskyer)
 
-2.0.5 under development
+2.0.6 March 17, 2019
 -----------------------
 
 - Bug #120: Fix debug panel markup to be compatible with Yii 2.0.10 (drdim)

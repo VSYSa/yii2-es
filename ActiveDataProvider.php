@@ -19,8 +19,8 @@ use yii\db\ActiveQueryInterface;
  * count will be fetched after pagination limit applying, which eliminates ability to verify if requested page number
  * actually exist. Data provider disables [[yii\data\Pagination::validatePage]] automatically because of this.
  *
- * @property array $aggregations All aggregations results. This property is read-only.
- * @property array $queryResults Full query results.
+ * @property array $queryResults the query results.
+ * @property array $aggregations all aggregations results.
  *
  * @author Paul Klimov <klimov.paul@gmail.com>
  * @since 2.0.5
@@ -95,15 +95,14 @@ class ActiveDataProvider extends \yii\data\ActiveDataProvider
             $query->addOrderBy($sort->getOrders());
         }
 
-        if (is_array(($results = $query->search($this->db)))) {
-            $this->setQueryResults($results);
-            if ($pagination !== false) {
-                $pagination->totalCount = $this->getTotalCount();
-            }
-            return $results['hits']['hits'];
+        $results = $query->search($this->db);
+        $this->setQueryResults($results);
+
+        if ($pagination !== false) {
+            $pagination->totalCount = $this->getTotalCount();
         }
-        $this->setQueryResults([]);
-        return [];
+
+        return $results['hits']['hits'];
     }
 
     /**
@@ -116,7 +115,7 @@ class ActiveDataProvider extends \yii\data\ActiveDataProvider
         }
 
         $results = $this->getQueryResults();
-        return isset($results['hits']['total']) ? (int)$results['hits']['total'] : 0;
+        return (int)$results['hits']['total'];
     }
 
     /**
@@ -157,14 +156,5 @@ class ActiveDataProvider extends \yii\data\ActiveDataProvider
         } else {
             return array_keys($models);
         }
-    }
-
-    /**
-     * @inheritdoc
-     */
-    public function refresh()
-    {
-        parent::refresh();
-        $this->_queryResults = null;
     }
 }

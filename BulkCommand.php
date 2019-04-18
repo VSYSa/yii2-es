@@ -44,7 +44,6 @@ class BulkCommand extends Component
      */
     public $options = [];
 
-
     /**
      * Executes the bulk command.
      * @return mixed
